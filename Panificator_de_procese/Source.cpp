@@ -3,6 +3,8 @@
 #include <ctime>
 #include <random>
 #include <list>
+#include <chrono>
+
 
 #define MEMORIE_TOTALA
 
@@ -48,11 +50,10 @@ public:
 
 };
 
-#define NUMBER 5
+#define NUMBER 100 //Numarul de procese
 const int T = 90000; //durata simularii
-const int q = 3; //cuanta de timp 
-const int Dmin = 20, Dmax = 20000, Mmin = 32, Mmax = 800, Imin = 1, Imax = 5;
-//Imin = 1, Imax = 1000,
+const int q = 60; //cuanta de timp 50 secunde
+const int Dmin = 20, Dmax = 20000, Mmin = 25, Mmax = 800, Imin = 1, Imax = 400;
 std::list<Partitie> memorieLibera, memoriePlina; //vom gestiona memoria ocupata de procese cu ajutorul listelor
 
 std::queue<Proces> coadaDeProcese;
@@ -61,18 +62,18 @@ std::vector<Proces> rezultateProcese;
 
 void GenerareValori()
 {
-	//for (std::size_t it = 0; it < NUMBER; ++it)
-	//{
-	//	std::default_random_engine generate(time(0));
-	//	std::uniform_int_distribution<int> durataViata(Dmin, Dmax);
-	//	std::uniform_int_distribution<int> memorieNecesara(Mmin, Mmax);
-	//	std::uniform_int_distribution<int> itimp(Imin, Imax);
-	//	procese.emplace_back(Proces(durataViata(generate), memorieNecesara(generate), itimp(generate)));
-	//}
-	procese.emplace_back(Proces(5, 9, 3));
-	procese.emplace_back(Proces(4, 9, 5));
-	procese.emplace_back(Proces(12, 4, 8));
+	for (std::size_t it = 0; it < NUMBER; ++it)
+	{
+		unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
 
+		std::default_random_engine generate(seed);
+		std::uniform_int_distribution<int> durataViata(Dmin, Dmax);
+		std::uniform_int_distribution<int> memorieNecesara(Mmin, Mmax);
+		std::uniform_int_distribution<int> mtimp(Imin, Imax); // momentul de tip in care a fost incarcat in  memorie procesul
+
+		procese.emplace_back(Proces(durataViata(generate), memorieNecesara(generate), mtimp(generate), mtimp(generate)));
+	}
+	   
 }
 
 void ReconstitueMemorieLibera()
@@ -89,6 +90,7 @@ void ReconstitueMemorieLibera()
 		if (itUrm != memorieLibera.end() && itUrm->adresaSfarsit+1 == it->adresaInceput)
 		{
 			it->adresaInceput = itUrm->adresaInceput;
+			it->dimensiune_partitie = it->adresaSfarsit - it->adresaInceput;
 			memorieLibera.erase(itUrm);
 		}
 		itUrm = it;
@@ -96,6 +98,8 @@ void ReconstitueMemorieLibera()
 	}
 
 }
+
+
 
 // o sa folosesc liste pentru gestionarea memoriei ocupata de procese;
 // memoria initiala(libera) = 40000 biti
@@ -124,6 +128,7 @@ bool RezervaMemorie(Proces& p)
 		++(freeParition->adresaInceput);
 		p.partitieProprie = partitieNoua;
 		partitieNoua->dimensiune_partitie = partitieNoua->adresaSfarsit - partitieNoua->adresaInceput;
+		freeParition->dimensiune_partitie = freeParition->adresaSfarsit - freeParition->adresaInceput;
 		memoriePlina.push_back(*partitieNoua);
 
 		ReconstitueMemorieLibera();
@@ -148,6 +153,7 @@ void ElibereazaMemorie(Proces& p)
 	}
 	p.partitieProprie = NULL;
 	rezultateProcese.push_back(p);
+	partitieNoua->dimensiune_partitie = partitieNoua->adresaSfarsit - partitieNoua->adresaInceput;
 	memorieLibera.push_back(*partitieNoua);
 
 	ReconstitueMemorieLibera();
@@ -158,27 +164,32 @@ void PlanificatorDeProcese()
 {
 	std::sort(procese.begin(), procese.end(), [](Proces& a, Proces& b) ->bool
 	{
-		return a.itimp < b.itimp;
+		return a.mtimp > b.mtimp;
 	});
 	int time = 0;
-	int index = 0;
+
+	std::cout << "Cat de utilizata a fost memoria(cate procese utilizeaza memoria la un anumit moment):\n";
+	std::cout << "------------------------\n";
 	while (true)
 	{
-		if (index < procese.size() && time == procese[index].itimp)
+		if (procese.empty() == false && time >= procese.back().mtimp)
 		{
-			coadaDeProcese.push(procese[index]);
-			if (RezervaMemorie(coadaDeProcese.back()) == false)
-				continue;
-			++index;
+			if (RezervaMemorie(procese.back()) == true)
+			{
+				coadaDeProcese.push(procese.back());
+				procese.pop_back();
+			}
 		}
 		if (!coadaDeProcese.empty())
 		{
 			if (coadaDeProcese.front().ProcesTerminat() == true)
 			{
+				std::cout << memoriePlina.size() << "|"; 
 				coadaDeProcese.front().timpTerminareProces = time;
 				ElibereazaMemorie(coadaDeProcese.front());
 				coadaDeProcese.pop();
 			}
+
 			if (time % q == 0  && coadaDeProcese.empty() == false)
 			{
 				Proces p = coadaDeProcese.front();
@@ -190,14 +201,16 @@ void PlanificatorDeProcese()
 				++(coadaDeProcese.front().timpFolosireProcesor);
 		}
 		++time;
-		if (coadaDeProcese.empty() == true && procese.size() == index)
+		if (coadaDeProcese.empty() == true && procese.empty() == true)
 			break;
 	}
+	std::cout << "\n------------------------\n";
+
 }
 
 void afisareInfoProcese()
 {
-	std::cout << "Numar procese:" << rezultateProcese.size() << std::endl << std::endl;
+	std::cout << "\nNumar procese:" << rezultateProcese.size() << std::endl << std::endl;
 
 	int i = 0;
 	for (Proces& p :rezultateProcese)
@@ -205,7 +218,10 @@ void afisareInfoProcese()
 		++i;
 		std::cout << "Numar proces:" << i << std::endl;
 		std::cout << "Timp terminare proces:" << p.timpTerminareProces << std::endl;
+		std::cout << "Memorie necesara:" << p.memorieNecesara << std::endl;
+		std::cout << "Durata viata proces:" << p.durataViata << std::endl;
 		std::cout << "Numar cuante de timp:" << p.memorieNecesara / q << std::endl << std::endl;
+
 		
 	}
 }
@@ -213,13 +229,11 @@ void afisareInfoProcese()
 int main()
 {
 	GenerareValori();
-	//memorieLibera.emplace_back(0,40000); // memoria initiala = 40000 biti
-	//memorieLibera.front().adresaInceput = 0;
-	//memorieLibera.front().adresaSfarsit = 40000;
-	memorieLibera.emplace_back(0, 10); // memoria initiala = 40000 biti
+	memorieLibera.emplace_back(0,1000); // memoria initiala = 1000 biti
 	memorieLibera.front().adresaInceput = 0;
-	memorieLibera.front().adresaSfarsit = 10;
+	memorieLibera.front().adresaSfarsit = 1000;
 	PlanificatorDeProcese();
 	afisareInfoProcese();
+	system("pause");
 	return 0;
 }
